@@ -8,7 +8,23 @@ echo "============================"
 echo " DNSSEC-Manager Installer"
 echo "============================"
 
-# --- FUNCTIONS ---
+# ----------------------------
+# CONFIGURATION DIRECTORY
+# ----------------------------
+INSTALL_DIR="/opt/dnssec-manager"
+
+# Create directory if it does not exist
+if [ ! -d "$INSTALL_DIR" ]; then
+  echo "Directory $INSTALL_DIR does not exist. Creating..."
+  mkdir -p "$INSTALL_DIR"
+fi
+
+cd "$INSTALL_DIR"
+echo "Working in directory: $(pwd)"
+
+# ----------------------------
+# FUNCTIONS
+# ----------------------------
 function wait_for_url() {
   local url=$1
   local name=$2
@@ -45,7 +61,9 @@ function check_port_53() {
   fi
 }
 
-# --- WIZARD ---
+# ----------------------------
+# WIZARD PROMPTS
+# ----------------------------
 read -rp "Enter main domain for backend (e.g., dns.example.com): " DOMAIN
 read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
 read -rp "Enter your email for Let's Encrypt: " EMAIL
@@ -65,12 +83,17 @@ DASH_USER=${DASH_USER:-admin}
 read -rp "Enter Traefik dashboard password (leave empty for random): " DASH_PASS
 DASH_PASS=${DASH_PASS:-$(generate_password)}
 
+# Create bcrypt hash for Traefik Basic Auth
 DASH_AUTH=$(htpasswd -nbB $DASH_USER $DASH_PASS | cut -d ":" -f 2)
 
-# --- CHECK PORTS ---
+# ----------------------------
+# CHECK PORTS
+# ----------------------------
 check_port_53
 
-# --- INSTALL DOCKER + COMPOSE ---
+# ----------------------------
+# INSTALL DOCKER + COMPOSE
+# ----------------------------
 if ! command -v docker >/dev/null; then
   echo "Installing Docker..."
   curl -fsSL https://get.docker.com | sh
@@ -83,7 +106,9 @@ if ! command -v docker-compose >/dev/null; then
   chmod +x /usr/local/bin/docker-compose
 fi
 
-# --- CREATE .env ---
+# ----------------------------
+# CREATE .env
+# ----------------------------
 cat > .env <<EOF
 DOMAIN=$DOMAIN
 DOMAIN_DASHBOARD=$DOMAIN_DASHBOARD
@@ -97,11 +122,15 @@ TRAEFIK_DASH_AUTH=$DASH_AUTH
 EOF
 echo ".env file created."
 
-# --- DOWNLOAD COMPOSE FILE ---
-curl -fsSL https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/compose.prod-traefik.yml -o compose.prod-traefik.yml
-echo "compose.prod-traefik.yml downloaded."
+# ----------------------------
+# DOWNLOAD COMPOSE FILE
+# ----------------------------
+curl -fsSL https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/compose.prod.yml -o compose.prod.yml
+echo "compose.prod.yml downloaded."
 
-# --- FIREWALL ---
+# ----------------------------
+# FIREWALL (optional)
+# ----------------------------
 if command -v ufw >/dev/null; then
   echo "Configuring firewall..."
   ufw allow 53/tcp
@@ -110,11 +139,15 @@ if command -v ufw >/dev/null; then
   ufw allow 443/tcp
 fi
 
-# --- START STACK ---
+# ----------------------------
+# START STACK
+# ----------------------------
 echo "Starting Docker stack..."
-docker compose -f compose.prod-traefik.yml up -d
+docker compose -f compose.prod.yml up -d
 
-# --- SYSTEMD SERVICE ---
+# ----------------------------
+# SYSTEMD SERVICE
+# ----------------------------
 SERVICE_FILE="/etc/systemd/system/dnssecmanager.service"
 cat > $SERVICE_FILE <<EOF
 [Unit]
@@ -124,8 +157,8 @@ Requires=docker.service
 
 [Service]
 WorkingDirectory=$(pwd)
-ExecStart=/usr/local/bin/docker compose -f $(pwd)/compose.prod-traefik.yml up
-ExecStop=/usr/local/bin/docker compose -f $(pwd)/compose.prod-traefik.yml down
+ExecStart=/usr/local/bin/docker compose -f $(pwd)/compose.prod.yml up
+ExecStop=/usr/local/bin/docker compose -f $(pwd)/compose.prod.yml down
 Restart=always
 
 [Install]
@@ -136,7 +169,9 @@ systemctl daemon-reload
 systemctl enable dnssecmanager
 systemctl start dnssecmanager
 
-# --- HEALTHCHECKS ---
+# ----------------------------
+# HEALTHCHECKS
+# ----------------------------
 echo "Waiting for PowerDNS API..."
 wait_for_url "http://localhost:8081" "PowerDNS API"
 
@@ -157,9 +192,11 @@ if [[ $retries -le 0 ]]; then
 fi
 echo "Traefik HTTPS is up!"
 
-# --- DONE ---
+# ----------------------------
+# DONE
+# ----------------------------
 echo ""
-echo "✅ Installation complete!"
+echo "Installation complete!"
 echo "Backend: https://$DOMAIN"
 echo "Dashboard: https://$DOMAIN_DASHBOARD (user: $DASH_USER, pass: $DASH_PASS)"
 echo "PDNS API Key: $PDNS_API_KEY"
