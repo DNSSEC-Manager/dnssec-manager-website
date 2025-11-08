@@ -15,12 +15,12 @@ INSTALL_DIR="/opt/dnssec-manager"
 
 # Create directory if it does not exist
 if [ ! -d "$INSTALL_DIR" ]; then
-  echo "Directory $INSTALL_DIR does not exist. Creating..."
+  echo "📂 Directory $INSTALL_DIR does not exist. Creating..."
   mkdir -p "$INSTALL_DIR"
 fi
 
 cd "$INSTALL_DIR"
-echo "Working in directory: $(pwd)"
+echo "✅ Working in directory: $(pwd)"
 
 # ----------------------------
 # FUNCTIONS
@@ -54,12 +54,35 @@ function check_port_53() {
       systemctl stop systemd-resolved
       systemctl disable systemd-resolved
       echo "systemd-resolved stopped."
+
+      # Fix DNS resolution
+      echo "nameserver 1.1.1.1" > /etc/resolv.conf
+      echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+      echo "✅ Temporary DNS configured for curl."
     else
       echo "WARNING: Port 53 is still in use! Please free it manually and rerun."
       exit 1
     fi
   fi
 }
+
+# ----------------------------
+# INSTALL REQUIRED TOOLS
+# ----------------------------
+echo "Updating package index..."
+apt update -y
+
+# Ensure htpasswd is available
+if ! command -v htpasswd >/dev/null; then
+  echo "Installing apache2-utils (htpasswd)..."
+  apt install -y apache2-utils
+fi
+
+# Ensure curl is available
+if ! command -v curl >/dev/null; then
+  echo "Installing curl..."
+  apt install -y curl
+fi
 
 # ----------------------------
 # WIZARD PROMPTS
@@ -192,13 +215,4 @@ if [[ $retries -le 0 ]]; then
 fi
 echo "Traefik HTTPS is up!"
 
-# ----------------------------
-# DONE
-# ----------------------------
-echo ""
-echo "Installation complete!"
-echo "Backend: https://$DOMAIN"
-echo "Dashboard: https://$DOMAIN_DASHBOARD (user: $DASH_USER, pass: $DASH_PASS)"
-echo "PDNS API Key: $PDNS_API_KEY"
-echo "DB passwords stored in .env"
-echo "Full log available at $LOG_FILE"
+# --------------------
