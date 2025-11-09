@@ -114,7 +114,7 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
 
     TRAEFIK_USER="admin"
     TRAEFIK_PASS=$(generate_password)
-    TRAEFIK_AUTH=$(htpasswd -nbB $DASH_USER $DASH_PASS | cut -d ":" -f 2)
+    TRAEFIK_AUTH=$(htpasswd -nbB $TRAEFIK_USER $TRAEFIK_PASS | cut -d ":" -f 2)
     PDNS_API_KEY=$(generate_password)
     PDNS_DB_PASSWORD=$(generate_password)
     MYSQL_ROOT_PASSWORD=$(generate_password)
