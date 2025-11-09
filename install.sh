@@ -178,6 +178,35 @@ if [ "$UPDATE" = true ]; then
 fi
 
 # ----------------------------------------
+# Configure firewall (UFW)
+# ----------------------------------------
+if command -v ufw >/dev/null 2>&1; then
+    echo "Configuring firewall with UFW..."
+
+    ufw allow 22/tcp   >/dev/null 2>&1 || true
+    ufw allow 80/tcp   >/dev/null 2>&1 || true
+    ufw allow 443/tcp  >/dev/null 2>&1 || true
+
+    # DNS ports (public!)
+    ufw allow 53/tcp   >/dev/null 2>&1 || true
+    ufw allow 53/udp   >/dev/null 2>&1 || true
+
+    # PowerDNS API / Stats
+    ufw allow 8081/tcp >/dev/null 2>&1 || true
+
+    # Enable UFW only if not enabled yet
+    if ! ufw status | grep -q "Status: active"; then
+        echo "Enabling UFW..."
+        yes | ufw enable
+    fi
+
+    echo "Firewall rules applied."
+else
+    echo "UFW not installed or not available; skipping firewall configuration."
+fi
+
+
+# ----------------------------------------
 # Start stack
 # ----------------------------------------
 echo "Starting Docker stack..."
