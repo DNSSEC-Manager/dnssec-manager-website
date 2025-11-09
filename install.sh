@@ -110,7 +110,6 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     read -rp "Enter DNSSEC Manager dashboard domain (e.g., dns.example.com): " DOMAIN
     read -rp "Enter Nameserver NS1 for this server (e.g., ns1.example.com): " DOMAIN_NS1
     read -rp "Enter Nameserver NS2 for this server (e.g., ns2.example.com): " DOMAIN_NS2
-    read -rp "Enter Nameserver NS3 for this server (e.g., ns3.example.com): " DOMAIN_NS3
     read -rp "Enter your email for Let's Encrypt: " EMAIL
 
     TRAEFIK_USER="admin"
@@ -131,7 +130,6 @@ EMAIL=$EMAIL
 DOMAIN=$DOMAIN
 DOMAIN_NS1=$DOMAIN_NS1
 DOMAIN_NS2=$DOMAIN_NS2
-DOMAIN_NS3=$DOMAIN_NS3
 
 PDNS_API_KEY="$PDNS_API_KEY"
 PDNS_DB_PASSWORD="$PDNS_DB_PASSWORD"
