@@ -115,6 +115,9 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     TRAEFIK_USER="admin"
     TRAEFIK_PASS=$(generate_password)
     TRAEFIK_AUTH=$(htpasswd -nbB $TRAEFIK_USER $TRAEFIK_PASS | cut -d ":" -f 2)
+    # Escape dollar signs for Docker Compose
+    TRAEFIK_AUTH_ESCAPED="${TRAEFIK_AUTH//$/\$\$}"
+    
     PDNS_API_KEY=$(generate_password)
     PDNS_DB_PASSWORD=$(generate_password)
     MYSQL_ROOT_PASSWORD=$(generate_password)
@@ -124,7 +127,7 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     cat > "$ENV_FILE" <<EOF
 TRAEFIK_HOST=$TRAEFIK_HOST
 TRAEFIK_USER=$TRAEFIK_USER
-TRAEFIK_AUTH="$TRAEFIK_AUTH"
+TRAEFIK_AUTH="$TRAEFIK_AUTH_ESCAPED"
 EMAIL=$EMAIL
 
 DOMAIN=$DOMAIN
