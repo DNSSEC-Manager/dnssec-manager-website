@@ -91,7 +91,7 @@ read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOA
 read -rp "Enter your email for Let's Encrypt: " EMAIL
 
 read -rp "Enter PowerDNS API key (leave empty to generate random): " PDNS_API_KEY
-PDNS_API_KEY=${PDNS_API_KEY:-$(openssl rand -base64 24)}
+PDNS_API_KEY=${PDNS_API_KEY:-$(generate_password)}
 
 read -rp "Enter MariaDB root password (leave empty to generate random): " MYSQL_ROOT_PASSWORD
 MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-$(generate_password)}
@@ -106,7 +106,7 @@ read -rp "Enter Traefik dashboard password (leave empty for random): " DASH_PASS
 DASH_PASS=${DASH_PASS:-$(generate_password)}
 
 # Create bcrypt hash for Traefik Basic Auth
-DASH_AUTH=$(htpasswd -nbB $DASH_USER $DASH_PASS | cut -d ":" -f 2)
+DASH_AUTH=$(htpasswd -nbB "$DASH_USER" "$DASH_PASS" | cut -d ":" -f 2)
 
 # ----------------------------
 # Check port 53
@@ -146,10 +146,11 @@ EOF
 echo ".env file created at $ENV_FILE"
 
 # ----------------------------
-# Download compose file
+# Download compose file and rename
 # ----------------------------
 curl -fsSL https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/compose.prod.yml -o compose.prod.yml
-echo "compose.prod.yml downloaded."
+mv -f compose.prod.yml docker-compose.yml
+echo "docker-compose.yml ready"
 
 # ----------------------------
 # Optional firewall
@@ -166,22 +167,22 @@ fi
 # Start Docker stack
 # ----------------------------
 echo "Starting Docker stack..."
-docker compose -f compose.prod.yml up -d
+docker compose up -d
 
 # ----------------------------
 # Systemd service
 # ----------------------------
 SERVICE_FILE="/etc/systemd/system/dnssecmanager.service"
-cat > $SERVICE_FILE <<EOF
+cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=DNSSEC-Manager Stack
 After=docker.service
 Requires=docker.service
 
 [Service]
-WorkingDirectory=$(pwd)
-ExecStart=/usr/local/bin/docker compose -f $(pwd)/compose.prod.yml up
-ExecStop=/usr/local/bin/docker compose -f $(pwd)/compose.prod.yml down
+WorkingDirectory=$INSTALL_DIR
+ExecStart=/usr/local/bin/docker compose up
+ExecStop=/usr/local/bin/docker compose down
 Restart=always
 
 [Install]
@@ -197,13 +198,6 @@ systemctl start dnssecmanager
 # ----------------------------
 wait_for_url "http://localhost:8081" "PowerDNS API"
 wait_for_url "http://localhost:5000" "Backend UI"
-# Optional: wait for Traefik HTTPS certificates (if Traefik configured)
-# retries=60
-# until curl -kfsS "https://$DOMAIN" >/dev/null 2>&1 || [[ $retries -le 0 ]]; do
-#   echo -n "."
-#   sleep 5
-#   ((retries--))
-# done
 
 # ----------------------------
 # Installation summary
@@ -221,4 +215,4 @@ echo "MariaDB root password: $MYSQL_ROOT_PASSWORD"
 echo "PowerDNS DB password: $PDNS_DB_PASSWORD"
 echo ""
 echo "✅ All information is stored in $ENV_FILE"
-echo "You can check running containers with: docker compose -f $INSTALL_DIR/compose.prod.yml ps"
+echo "You can check running containers with: docker compose ps"
