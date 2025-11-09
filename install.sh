@@ -16,6 +16,14 @@ echo "============================"
 echo ""
 
 # ----------------------------------------
+# Check root
+# ----------------------------------------
+if [ "$EUID" -ne 0 ]; then
+  echo "Run as root"
+  exit
+fi
+
+# ----------------------------------------
 # Flags
 # ----------------------------------------
 REINSTALL=false
@@ -98,29 +106,36 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     echo "Configuration Wizard"
     echo "--------------------"
 
-    read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
-    read -rp "Enter PowerDNS API domain (e.g., pdns.example.com): " DOMAIN_PDNS
+    read -rp "Enter Traefik dashboard domain (e.g., traefik.example.com): " TRAEFIK_HOST
+    read -rp "Enter DNSSEC Manager dashboard domain (e.g., dns.example.com): " DOMAIN
+    read -rp "Enter Nameserver NS1 for this server (e.g., ns1.example.com): " DOMAIN_NS1
+    read -rp "Enter Nameserver NS2 for this server (e.g., ns2.example.com): " DOMAIN_NS2
+    read -rp "Enter Nameserver NS3 for this server (e.g., ns3.example.com): " DOMAIN_NS3
     read -rp "Enter your email for Let's Encrypt: " EMAIL
 
-    DASH_USER="admin"
-    DASH_PASS=$(generate_password)
-    DASH_AUTH=$(htpasswd -nbB $DASH_USER $DASH_PASS | cut -d ":" -f 2)
+    TRAEFIK_USER="admin"
+    TRAEFIK_PASS=$(generate_password)
+    TRAEFIK_AUTH=$(htpasswd -nbB $DASH_USER $DASH_PASS | cut -d ":" -f 2)
     PDNS_API_KEY=$(generate_password)
-    MYSQL_ROOT_PASSWORD=$(generate_password)
     PDNS_DB_PASSWORD=$(generate_password)
+    MYSQL_ROOT_PASSWORD=$(generate_password)
+    
 
     # Save environment file
     cat > "$ENV_FILE" <<EOF
-DOMAIN_DASHBOARD=$DOMAIN_DASHBOARD
-DOMAIN_PDNS=$DOMAIN_PDNS
+TRAEFIK_HOST=$TRAEFIK_HOST
+TRAEFIK_USER=$TRAEFIK_USER
+TRAEFIK_AUTH="$TRAEFIK_AUTH"
+EMAIL=$EMAIL
 
-DASH_USER=$DASH_USER
-DASH_PASS="$DASH_PASS"
+DOMAIN=$DOMAIN
+DOMAIN_NS1=$DOMAIN_NS1
+DOMAIN_NS2=$DOMAIN_NS2
+DOMAIN_NS3=$DOMAIN_NS3
 
 PDNS_API_KEY="$PDNS_API_KEY"
-
-MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
 PDNS_DB_PASSWORD="$PDNS_DB_PASSWORD"
+MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
 EOF
 
     echo ".env file created."
