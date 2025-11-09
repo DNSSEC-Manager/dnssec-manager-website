@@ -126,6 +126,8 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     TRAEFIK_HOST=traefik.$DOMAINNAME
     BACKEND_HOST=dnssecmanager.$DOMAINNAME
     PDNS_HOST=powerdns.$DOMAINNAME
+    DOMAIN_NS1=ns1.$DOMAINNAME
+    DOMAIN_NS2=ns2.$DOMAINNAME
 
     # Save environment file
     cat > "$ENV_FILE" <<EOF
