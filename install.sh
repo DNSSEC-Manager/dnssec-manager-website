@@ -1,20 +1,36 @@
 #!/usr/bin/env bash
-
 set -e
 
-# ----------------------------------------
-# DNSSEC-Manager Installer
-# ----------------------------------------
 INSTALL_DIR="/opt/dnssec-manager"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 ENV_FILE="$INSTALL_DIR/.env"
 SCHEMA_FILE="$INSTALL_DIR/schema.sql"
 REPO_BASE="https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main"
 
+LOG_FILE="$INSTALL_DIR/install.log"
+exec > >(tee -i "$LOG_FILE") 2>&1
+
 echo "============================"
 echo " DNSSEC-Manager Installer"
 echo "============================"
 echo ""
+
+# ----------------------------------------
+# Flags
+# ----------------------------------------
+REINSTALL=false
+UPDATE=false
+
+for arg in "$@"; do
+    case $arg in
+        --reinstall)
+            REINSTALL=true
+            ;;
+        --update)
+            UPDATE=true
+            ;;
+    esac
+done
 
 # ----------------------------------------
 # Helper functions
@@ -39,6 +55,22 @@ wait_for_http() {
     done
     echo ""
     echo "⚠ WARNING: $LABEL did not become ready in time, continuing..."
+}
+
+check_port_53() {
+  if lsof -i:53 >/dev/null 2>&1; then
+    echo "Port 53 is in use. Attempting to stop conflicting service..."
+    if systemctl is-active --quiet systemd-resolved; then
+      systemctl stop systemd-resolved
+      systemctl disable systemd-resolved
+      echo "systemd-resolved stopped."
+      echo "nameserver 1.1.1.1" > /etc/resolv.conf
+      echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+    else
+      echo "⚠ Port 53 is still in use! Free it manually and rerun."
+      exit 1
+    fi
+  fi
 }
 
 # ----------------------------------------
@@ -81,12 +113,12 @@ DOMAIN_DASHBOARD=$DOMAIN_DASHBOARD
 DOMAIN_PDNS=$DOMAIN_PDNS
 
 DASH_USER=$DASH_USER
-DASH_PASS=$DASH_PASS
+DASH_PASS="$DASH_PASS"
 
-PDNS_API_KEY=$PDNS_API_KEY
+PDNS_API_KEY="$PDNS_API_KEY"
 
-MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
-PDNS_DB_PASSWORD=$PDNS_DB_PASSWORD
+MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
+PDNS_DB_PASSWORD="$PDNS_DB_PASSWORD"
 EOF
 
     echo ".env file created."
@@ -96,14 +128,9 @@ else
 fi
 
 # ----------------------------------------
-# Disable systemd-resolved (free port 53)
+# Check if port 53 is free for PowerDNS
 # ----------------------------------------
-if systemctl is-active --quiet systemd-resolved; then
-    echo "Port 53 is in use. Attempting to stop conflicting service..."
-    systemctl stop systemd-resolved
-    systemctl disable systemd-resolved
-    rm -f /etc/systemd/resolved.conf
-fi
+check_port_53
 
 # ----------------------------------------
 # Install Docker if needed
@@ -137,13 +164,8 @@ mv -f compose.prod.yml "$COMPOSE_FILE"
 echo "docker-compose.yml ready."
 
 # ----------------------------------------
-# Download schema.sql safely
+# Download schema.sql
 # ----------------------------------------
-
-if [ -d "$SCHEMA_FILE" ]; then
-    echo "⚠ WARNING: $SCHEMA_FILE is a directory, removing it..."
-    rm -rf "$SCHEMA_FILE"
-fi
 
 echo "Downloading schema.sql..."
 curl -fsSL "$REPO_BASE/schema.sql" -o "$SCHEMA_FILE"
@@ -194,6 +216,28 @@ fi
 # ----------------------------------------
 echo "Starting Docker stack..."
 docker compose up -d
+
+# --- SYSTEMD SERVICE ---
+SERVICE_FILE="/etc/systemd/system/dnssecmanager.service"
+cat > $SERVICE_FILE <<EOF
+[Unit]
+Description=DNSSEC-Manager Stack
+After=docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=$(pwd)
+ExecStart=/usr/local/bin/docker compose -f $(pwd)/compose.yml up
+ExecStop=/usr/local/bin/docker compose -f $(pwd)/compose.yml down
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable dnssecmanager
+systemctl start dnssecmanager
 
 # ----------------------------------------
 # Wait for PowerDNS
