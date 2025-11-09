@@ -17,23 +17,6 @@ echo "============================"
 echo ""
 
 # ----------------------------------------
-# Flags
-# ----------------------------------------
-REINSTALL=false
-UPDATE=false
-
-for arg in "$@"; do
-    case $arg in
-        --reinstall)
-            REINSTALL=true
-            ;;
-        --update)
-            UPDATE=true
-            ;;
-    esac
-done
-
-# ----------------------------------------
 # Helper functions
 # ----------------------------------------
 
