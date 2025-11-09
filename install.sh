@@ -106,10 +106,11 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     echo "Configuration Wizard"
     echo "--------------------"
 
-    read -rp "Enter Traefik dashboard domain (e.g., traefik.example.com): " TRAEFIK_HOST
-    read -rp "Enter DNSSEC Manager dashboard domain (e.g., dns.example.com): " DOMAIN
-    read -rp "Enter Nameserver NS1 for this server (e.g., ns1.example.com): " DOMAIN_NS1
-    read -rp "Enter Nameserver NS2 for this server (e.g., ns2.example.com): " DOMAIN_NS2
+    #read -rp "Enter Traefik dashboard domain (e.g., traefik.example.com): " TRAEFIK_HOST
+    #read -rp "Enter DNSSEC Manager dashboard domain (e.g., dns.example.com): " DOMAIN
+    #read -rp "Enter Nameserver NS1 for this server (e.g., ns1.example.com): " DOMAIN_NS1
+    #read -rp "Enter Nameserver NS2 for this server (e.g., ns2.example.com): " DOMAIN_NS2
+    read -rp "Enter your main domainname to attach to this nameserver (e.g., example.com): " DOMAINNAME
     read -rp "Enter your email for Let's Encrypt: " EMAIL
 
     TRAEFIK_USER="admin"
@@ -122,18 +123,23 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
     PDNS_DB_PASSWORD=$(generate_password)
     MYSQL_ROOT_PASSWORD=$(generate_password)
     
+    TRAEFIK_HOST=traefik.$DOMAINNAME
+    BACKEND_HOST=dnssecmanager.$DOMAINNAME
+    PDNS_HOST=powerdns.$DOMAINNAME
 
     # Save environment file
     cat > "$ENV_FILE" <<EOF
 TRAEFIK_HOST=$TRAEFIK_HOST
 TRAEFIK_USER=$TRAEFIK_USER
+TRAEFIK_PASS=$TRAEFIK_PASS
 TRAEFIK_AUTH="$TRAEFIK_AUTH_ESCAPED"
 EMAIL=$EMAIL
 
-DOMAIN=$DOMAIN
+BACKEND_HOST=$BACKEND_HOST
 DOMAIN_NS1=$DOMAIN_NS1
 DOMAIN_NS2=$DOMAIN_NS2
 
+PDNS_HOST=$PDNS_HOST
 PDNS_API_KEY="$PDNS_API_KEY"
 PDNS_DB_PASSWORD="$PDNS_DB_PASSWORD"
 MYSQL_ROOT_PASSWORD="$MYSQL_ROOT_PASSWORD"
@@ -260,12 +266,12 @@ systemctl start dnssecmanager
 # ----------------------------------------
 # Wait for PowerDNS
 # ----------------------------------------
-wait_for_http "http://localhost:8081" "PowerDNS API"
+#wait_for_http "http://localhost:8081" "PowerDNS API"
 
 # ----------------------------------------
 # Wait for Backend
 # ----------------------------------------
-wait_for_http "http://localhost:8080" "Backend UI"
+#wait_for_http "http://localhost:8080" "Backend UI"
 
 # ----------------------------------------
 # Final summary
@@ -275,12 +281,17 @@ echo "============================"
 echo " DNSSEC-Manager installation complete!"
 echo "============================"
 echo ""
-echo "Dashboard URL: https://$DOMAIN_DASHBOARD"
-echo "Dashboard credentials:"
-echo "  Username: $DASH_USER"
-echo "  Password: $DASH_PASS"
+echo "DNSSSEC Manager URL: https://$BACKEND_HOST"
+echo "Default login:"
+echo "  Username: admin"
+echo "  Password: ChangeMe123!"
 echo ""
-echo "PowerDNS API URL: https://$DOMAIN_PDNS"
+echo "Traefik URL: https://$TRAEFIK_HOST"
+echo "Traefik credentials:"
+echo "  Username: $TRAEFIK_USER"
+echo "  Password: $TRAEFIK_PASS"
+echo ""
+echo "PowerDNS API URL: https://$PDNS_HOST"
 echo "PowerDNS API Key: $PDNS_API_KEY"
 echo ""
 echo "MariaDB root password: $MYSQL_ROOT_PASSWORD"
