@@ -100,9 +100,11 @@ if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
 
     read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
     read -rp "Enter PowerDNS API domain (e.g., pdns.example.com): " DOMAIN_PDNS
+    read -rp "Enter your email for Let's Encrypt: " EMAIL
 
     DASH_USER="admin"
     DASH_PASS=$(generate_password)
+    DASH_AUTH=$(htpasswd -nbB $DASH_USER $DASH_PASS | cut -d ":" -f 2)
     PDNS_API_KEY=$(generate_password)
     MYSQL_ROOT_PASSWORD=$(generate_password)
     PDNS_DB_PASSWORD=$(generate_password)
