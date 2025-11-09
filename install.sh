@@ -1,262 +1,221 @@
 #!/usr/bin/env bash
+
 set -e
 
-# ============================
-# DNSSEC-Manager Installer with Traefik & HTTPS
-# ============================
-
-LOG_FILE="install.log"
-exec > >(tee -i "$LOG_FILE") 2>&1
+# ----------------------------------------
+# DNSSEC-Manager Installer
+# ----------------------------------------
+INSTALL_DIR="/opt/dnssec-manager"
+COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
+ENV_FILE="$INSTALL_DIR/.env"
+SCHEMA_FILE="$INSTALL_DIR/schema.sql"
+REPO_BASE="https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main"
 
 echo "============================"
 echo " DNSSEC-Manager Installer"
 echo "============================"
+echo ""
 
-# ----------------------------
+# ----------------------------------------
 # Flags
-# ----------------------------
+# ----------------------------------------
 REINSTALL=false
-UPDATE_ONLY=false
+UPDATE=false
 
 for arg in "$@"; do
-  case $arg in
-    --reinstall) REINSTALL=true ;;
-    --update) UPDATE_ONLY=true ;;
-  esac
+    case $arg in
+        --reinstall)
+            REINSTALL=true
+            ;;
+        --update)
+            UPDATE=true
+            ;;
+    esac
 done
 
-# ----------------------------
-# Directories & Files
-# ----------------------------
-INSTALL_DIR="/opt/dnssec-manager"
-ENV_FILE="$INSTALL_DIR/.env"
-COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
-SCHEMA_FILE="$INSTALL_DIR/schema.sql"
-LETSENCRYPT_DIR="$INSTALL_DIR/letsencrypt"
-
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$LETSENCRYPT_DIR"
-cd "$INSTALL_DIR"
-echo "Working directory: $(pwd)"
-
-# ----------------------------
+# ----------------------------------------
 # Helper functions
-# ----------------------------
-generate_password() { openssl rand -base64 16; }
+# ----------------------------------------
 
-wait_for_url() {
-  local url=$1
-  local name=$2
-  local retries=${3:-60}
-  echo "Waiting for $name at $url ..."
-  until curl -fsS "$url" >/dev/null 2>&1 || [[ $retries -le 0 ]]; do
-    echo -n "."
-    sleep 2
-    ((retries--))
-  done
-  if [[ $retries -le 0 ]]; then
+generate_password() {
+    openssl rand -base64 18
+}
+
+wait_for_http() {
+    local URL="$1"
+    local LABEL="$2"
+
+    echo "Waiting for $LABEL to be ready at $URL ..."
+    for i in {1..60}; do
+        if curl -fs "$URL" >/dev/null 2>&1; then
+            echo "$LABEL is ready!"
+            return 0
+        fi
+        printf "."
+        sleep 2
+    done
     echo ""
-    echo "⚠ WARNING: $name did not become ready in time, continuing..."
-  else
-    echo " $name is up!"
-  fi
+    echo "⚠ WARNING: $LABEL did not become ready in time, continuing..."
 }
 
-wait_for_mariadb() {
-  local retries=${1:-30}
-  echo "Waiting for MariaDB to be ready..."
-  until docker exec pdns-db mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SELECT 1;" >/dev/null 2>&1 || [[ $retries -le 0 ]]; do
-    echo -n "."
-    sleep 2
-    ((retries--))
-  done
-  if [[ $retries -le 0 ]]; then
-    echo ""
-    echo "⚠ WARNING: MariaDB did not become ready in time!"
-  else
-    echo " ✅ MariaDB is ready!"
-  fi
-}
-
-check_port_53() {
-  if lsof -i:53 >/dev/null 2>&1; then
-    echo "Port 53 is in use. Attempting to stop conflicting service..."
-    if systemctl is-active --quiet systemd-resolved; then
-      systemctl stop systemd-resolved
-      systemctl disable systemd-resolved
-      echo "systemd-resolved stopped."
-      echo "nameserver 1.1.1.1" > /etc/resolv.conf
-      echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-    else
-      echo "⚠ Port 53 is still in use! Free it manually and rerun."
-      exit 1
-    fi
-  fi
-}
-
-prompt_wizard() {
-  echo "Running interactive wizard..."
-  read -rp "Enter main domain for backend (e.g., dns.example.com): " DOMAIN
-  read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
-  read -rp "Enter your email for Let's Encrypt: " EMAIL
-
-  read -rp "Enable HTTPS via Let's Encrypt? (y/n): " ENABLE_HTTPS
-  ENABLE_HTTPS=${ENABLE_HTTPS,,}
-  USE_HTTPS=false
-  [[ "$ENABLE_HTTPS" == "y" ]] && USE_HTTPS=true
-
-  read -rp "Enter PowerDNS API key (leave empty to generate random): " PDNS_API_KEY
-  PDNS_API_KEY=${PDNS_API_KEY:-$(generate_password)}
-
-  read -rp "Enter MariaDB root password (leave empty to generate random): " MYSQL_ROOT_PASSWORD
-  MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-$(generate_password)}
-
-  read -rp "Enter PowerDNS DB password (leave empty to generate random): " PDNS_DB_PASSWORD
-  PDNS_DB_PASSWORD=${PDNS_DB_PASSWORD:-$(generate_password)}
-
-  read -rp "Enter Traefik dashboard username (leave empty for random): " DASH_USER
-  DASH_USER=${DASH_USER:-admin}
-
-  read -rp "Enter Traefik dashboard password (leave empty for random): " DASH_PASS
-  DASH_PASS=${DASH_PASS:-$(generate_password)}
-
-  # bcrypt for Traefik
-  DASH_AUTH=$(htpasswd -nbB "$DASH_USER" "$DASH_PASS" | cut -d ":" -f 2)
-}
-
-# ----------------------------
-# Prerequisites
-# ----------------------------
-apt update -y
-apt install -y apache2-utils curl lsof
-
-check_port_53
-
-if ! command -v docker >/dev/null; then
-  echo "Installing Docker..."
-  curl -fsSL https://get.docker.com | sh
+# ----------------------------------------
+# Prepare installation directory
+# ----------------------------------------
+if [ "$REINSTALL" = true ]; then
+    echo "Reinstall mode: removing existing installation..."
+    rm -rf "$INSTALL_DIR"
 fi
 
-if ! command -v docker-compose >/dev/null; then
-  echo "Installing Docker Compose..."
-  DOCKER_COMPOSE_VERSION="2.24.2"
-  curl -fsSL "https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-  chmod +x /usr/local/bin/docker-compose
+if [ ! -d "$INSTALL_DIR" ]; then
+    echo "Directory $INSTALL_DIR does not exist. Creating..."
+    mkdir -p "$INSTALL_DIR"
 fi
 
-# ----------------------------
-# Wizard & .env
-# ----------------------------
-if [ "$REINSTALL" = true ] || [ ! -f "$ENV_FILE" ]; then
-  prompt_wizard
-  cat > "$ENV_FILE" <<EOF
-DOMAIN=$DOMAIN
+cd "$INSTALL_DIR"
+
+echo "Working in directory: $INSTALL_DIR"
+
+# ----------------------------------------
+# Ask user for configuration (wizard)
+# ----------------------------------------
+if [ ! -f "$ENV_FILE" ] || [ "$REINSTALL" = true ]; then
+    echo ""
+    echo "Configuration Wizard"
+    echo "--------------------"
+
+    read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
+    read -rp "Enter PowerDNS API domain (e.g., pdns.example.com): " DOMAIN_PDNS
+
+    DASH_USER="admin"
+    DASH_PASS=$(generate_password)
+    PDNS_API_KEY=$(generate_password)
+    MYSQL_ROOT_PASSWORD=$(generate_password)
+    PDNS_DB_PASSWORD=$(generate_password)
+
+    # Save environment file
+    cat > "$ENV_FILE" <<EOF
 DOMAIN_DASHBOARD=$DOMAIN_DASHBOARD
-EMAIL=$EMAIL
-USE_HTTPS=$USE_HTTPS
+DOMAIN_PDNS=$DOMAIN_PDNS
+
+DASH_USER=$DASH_USER
+DASH_PASS=$DASH_PASS
+
 PDNS_API_KEY=$PDNS_API_KEY
-PDNS_DB_PASSWORD=$PDNS_DB_PASSWORD
+
 MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
-TRAEFIK_DASH_USER=$DASH_USER
-TRAEFIK_DASH_PASS=$DASH_PASS
-TRAEFIK_DASH_AUTH=$DASH_AUTH
+PDNS_DB_PASSWORD=$PDNS_DB_PASSWORD
 EOF
-  echo ".env file created at $ENV_FILE"
+
+    echo ".env file created."
 else
-  echo ".env file exists. Using current values."
-  source "$ENV_FILE"
+    echo ".env file exists — using existing configuration."
+    source "$ENV_FILE"
 fi
 
-# ----------------------------
-# Download schema.sql
-# ----------------------------
-SCHEMA_URL="https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/schema.sql"
-if [ ! -f "$SCHEMA_FILE" ] || [ "$REINSTALL" = true ]; then
-  curl -fsSL "$SCHEMA_URL" -o "$SCHEMA_FILE"
-  echo "schema.sql downloaded to $INSTALL_DIR"
+# ----------------------------------------
+# Disable systemd-resolved (free port 53)
+# ----------------------------------------
+if systemctl is-active --quiet systemd-resolved; then
+    echo "Port 53 is in use. Attempting to stop conflicting service..."
+    systemctl stop systemd-resolved
+    systemctl disable systemd-resolved
+    rm -f /etc/systemd/resolved.conf
+fi
+
+# ----------------------------------------
+# Install Docker if needed
+# ----------------------------------------
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Installing Docker..."
+    curl -fsSL https://get.docker.com | bash
 else
-  echo "schema.sql already exists, keeping current file."
+    echo "Docker already installed."
 fi
 
-# ----------------------------
-# Compose file
-# ----------------------------
-COMPOSE_URL="https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/compose.prod-traefik.yml"
-if [ ! -f "$COMPOSE_FILE" ] || [ "$REINSTALL" = true ]; then
-  curl -fsSL "$COMPOSE_URL" -o compose.prod-traefik.yml
-  mv -f compose.prod-traefik.yml docker-compose.yml
-  echo "docker-compose.yml ready"
+# ----------------------------------------
+# Install Docker Compose plugin
+# ----------------------------------------
+if ! docker compose version >/dev/null 2>&1; then
+    echo "Installing Docker Compose..."
+    mkdir -p /usr/lib/docker/cli-plugins
+    curl -fsSL https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64 \
+        -o /usr/lib/docker/cli-plugins/docker-compose
+    chmod +x /usr/lib/docker/cli-plugins/docker-compose
 else
-  echo "docker-compose.yml exists, keeping current file."
+    echo "Docker Compose plugin already present."
 fi
 
-# ----------------------------
-# Firewall
-# ----------------------------
-if command -v ufw >/dev/null; then
-  echo "Configuring firewall..."
-  ufw allow 53/tcp
-  ufw allow 53/udp
-  ufw allow 80/tcp
-  ufw allow 443/tcp
+# ----------------------------------------
+# Download compose file and rename
+# ----------------------------------------
+curl -fsSL "$REPO_BASE/compose.prod.yml" -o compose.prod.yml
+mv -f compose.prod.yml "$COMPOSE_FILE"
+
+echo "docker-compose.yml ready."
+
+# ----------------------------------------
+# Download schema.sql safely
+# ----------------------------------------
+
+if [ -d "$SCHEMA_FILE" ]; then
+    echo "⚠ WARNING: $SCHEMA_FILE is a directory, removing it..."
+    rm -rf "$SCHEMA_FILE"
 fi
 
-# ----------------------------
-# Docker stack
-# ----------------------------
-echo "Pulling latest images..."
-docker compose pull
+echo "Downloading schema.sql..."
+curl -fsSL "$REPO_BASE/schema.sql" -o "$SCHEMA_FILE"
+echo "schema.sql downloaded."
 
-echo "Starting/updating Docker stack..."
+# ----------------------------------------
+# Update mode
+# ----------------------------------------
+if [ "$UPDATE" = true ]; then
+    echo "Updating images..."
+    docker compose pull
+    docker compose up -d
+    echo "Update complete."
+    exit 0
+fi
+
+# ----------------------------------------
+# Start stack
+# ----------------------------------------
+echo "Starting Docker stack..."
 docker compose up -d
 
-# ----------------------------
-# Systemd service
-# ----------------------------
-SERVICE_FILE="/etc/systemd/system/dnssecmanager.service"
-if [ ! -f "$SERVICE_FILE" ]; then
-  cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=DNSSEC-Manager Stack
-After=docker.service
-Requires=docker.service
+# ----------------------------------------
+# Wait for PowerDNS
+# ----------------------------------------
+wait_for_http "http://localhost:8081" "PowerDNS API"
 
-[Service]
-WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/local/bin/docker compose up
-ExecStop=/usr/local/bin/docker compose down
-Restart=always
+# ----------------------------------------
+# Wait for Backend
+# ----------------------------------------
+wait_for_http "http://localhost:8080" "Backend UI"
 
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  systemctl enable dnssecmanager
-  systemctl start dnssecmanager
-fi
-
-# ----------------------------
-# Healthchecks
-# ----------------------------
-wait_for_mariadb 60
-wait_for_url "http://localhost:8081" "PowerDNS API"
-wait_for_url "http://localhost:5000" "Backend UI"
-
-# ----------------------------
-# Summary
-# ----------------------------
+# ----------------------------------------
+# Final summary
+# ----------------------------------------
 echo ""
 echo "============================"
 echo " DNSSEC-Manager installation complete!"
 echo "============================"
 echo ""
-echo "Backend URL: https://${DOMAIN}"
-echo "Dashboard URL: https://${DOMAIN_DASHBOARD}"
-echo "Dashboard credentials: $DASH_USER / $DASH_PASS"
+echo "Dashboard URL: https://$DOMAIN_DASHBOARD"
+echo "Dashboard credentials:"
+echo "  Username: $DASH_USER"
+echo "  Password: $DASH_PASS"
+echo ""
+echo "PowerDNS API URL: https://$DOMAIN_PDNS"
 echo "PowerDNS API Key: $PDNS_API_KEY"
+echo ""
 echo "MariaDB root password: $MYSQL_ROOT_PASSWORD"
 echo "PowerDNS DB password: $PDNS_DB_PASSWORD"
 echo ""
-echo "✅ All information is stored in $ENV_FILE"
-echo "Check containers: docker compose ps"
-echo "Follow logs: docker compose logs -f"
+echo "Environment stored in: $ENV_FILE"
+echo ""
+echo "To manage the stack:"
+echo "  cd $INSTALL_DIR"
+echo "  docker compose ps"
+echo "  docker compose logs -f"
+echo ""
