@@ -12,16 +12,36 @@ echo " DNSSEC-Manager Installer"
 echo "============================"
 
 # ----------------------------
+# Command-line flags
+# ----------------------------
+REINSTALL=false
+UPDATE_ONLY=false
+
+for arg in "$@"; do
+  case $arg in
+    --reinstall)
+      REINSTALL=true
+      shift
+      ;;
+    --update)
+      UPDATE_ONLY=true
+      shift
+      ;;
+    *)
+      ;;
+  esac
+done
+
+# ----------------------------
 # Configuration directory
 # ----------------------------
 INSTALL_DIR="/opt/dnssec-manager"
+ENV_FILE="$INSTALL_DIR/.env"
+COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 
-if [ ! -d "$INSTALL_DIR" ]; then
-  echo "📂 Directory $INSTALL_DIR does not exist. Creating..."
-  mkdir -p "$INSTALL_DIR"
-fi
+mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
-echo "✅ Working in directory: $(pwd)"
+echo "Working directory: $(pwd)"
 
 # ----------------------------
 # Helper functions
@@ -55,11 +75,8 @@ function check_port_53() {
       systemctl stop systemd-resolved
       systemctl disable systemd-resolved
       echo "systemd-resolved stopped."
-
-      # Fix DNS temporarily for curl
       echo "nameserver 1.1.1.1" > /etc/resolv.conf
       echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-      echo "✅ Temporary DNS configured for curl."
     else
       echo "⚠ Port 53 is still in use! Please free it manually and rerun."
       exit 1
@@ -67,46 +84,37 @@ function check_port_53() {
   fi
 }
 
+function prompt_wizard() {
+  echo "Running interactive wizard..."
+  read -rp "Enter main domain for backend (e.g., dns.example.com): " DOMAIN
+  read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
+  read -rp "Enter your email for Let's Encrypt: " EMAIL
+
+  read -rp "Enter PowerDNS API key (leave empty to generate random): " PDNS_API_KEY
+  PDNS_API_KEY=${PDNS_API_KEY:-$(generate_password)}
+
+  read -rp "Enter MariaDB root password (leave empty to generate random): " MYSQL_ROOT_PASSWORD
+  MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-$(generate_password)}
+
+  read -rp "Enter PowerDNS DB password (leave empty to generate random): " PDNS_DB_PASSWORD
+  PDNS_DB_PASSWORD=${PDNS_DB_PASSWORD:-$(generate_password)}
+
+  read -rp "Enter Traefik dashboard username (leave empty for random): " DASH_USER
+  DASH_USER=${DASH_USER:-admin}
+
+  read -rp "Enter Traefik dashboard password (leave empty for random): " DASH_PASS
+  DASH_PASS=${DASH_PASS:-$(generate_password)}
+
+  # bcrypt for Traefik
+  DASH_AUTH=$(htpasswd -nbB "$DASH_USER" "$DASH_PASS" | cut -d ":" -f 2)
+}
+
 # ----------------------------
-# Install required tools
+# Install prerequisites
 # ----------------------------
 echo "Updating package index..."
 apt update -y
-
-if ! command -v htpasswd >/dev/null; then
-  echo "Installing apache2-utils (htpasswd)..."
-  apt install -y apache2-utils
-fi
-
-if ! command -v curl >/dev/null; then
-  echo "Installing curl..."
-  apt install -y curl
-fi
-
-# ----------------------------
-# Wizard prompts
-# ----------------------------
-read -rp "Enter main domain for backend (e.g., dns.example.com): " DOMAIN
-read -rp "Enter dashboard domain (e.g., dashboard.example.com): " DOMAIN_DASHBOARD
-read -rp "Enter your email for Let's Encrypt: " EMAIL
-
-read -rp "Enter PowerDNS API key (leave empty to generate random): " PDNS_API_KEY
-PDNS_API_KEY=${PDNS_API_KEY:-$(generate_password)}
-
-read -rp "Enter MariaDB root password (leave empty to generate random): " MYSQL_ROOT_PASSWORD
-MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-$(generate_password)}
-
-read -rp "Enter PowerDNS DB password (leave empty to generate random): " PDNS_DB_PASSWORD
-PDNS_DB_PASSWORD=${PDNS_DB_PASSWORD:-$(generate_password)}
-
-read -rp "Enter Traefik dashboard username (leave empty for random): " DASH_USER
-DASH_USER=${DASH_USER:-admin}
-
-read -rp "Enter Traefik dashboard password (leave empty for random): " DASH_PASS
-DASH_PASS=${DASH_PASS:-$(generate_password)}
-
-# Create bcrypt hash for Traefik Basic Auth
-DASH_AUTH=$(htpasswd -nbB "$DASH_USER" "$DASH_PASS" | cut -d ":" -f 2)
+apt install -y apache2-utils curl lsof
 
 # ----------------------------
 # Check port 53
@@ -114,7 +122,7 @@ DASH_AUTH=$(htpasswd -nbB "$DASH_USER" "$DASH_PASS" | cut -d ":" -f 2)
 check_port_53
 
 # ----------------------------
-# Install Docker & Compose
+# Install Docker & Compose if missing
 # ----------------------------
 if ! command -v docker >/dev/null; then
   echo "Installing Docker..."
@@ -129,10 +137,11 @@ if ! command -v docker-compose >/dev/null; then
 fi
 
 # ----------------------------
-# Create .env
+# Wizard & .env creation
 # ----------------------------
-ENV_FILE="$INSTALL_DIR/.env"
-cat > "$ENV_FILE" <<EOF
+if [ "$REINSTALL" = true ] || [ ! -f "$ENV_FILE" ]; then
+  prompt_wizard
+  cat > "$ENV_FILE" <<EOF
 DOMAIN=$DOMAIN
 DOMAIN_DASHBOARD=$DOMAIN_DASHBOARD
 EMAIL=$EMAIL
@@ -143,17 +152,26 @@ TRAEFIK_DASH_USER=$DASH_USER
 TRAEFIK_DASH_PASS=$DASH_PASS
 TRAEFIK_DASH_AUTH=$DASH_AUTH
 EOF
-echo ".env file created at $ENV_FILE"
+  echo ".env file created at $ENV_FILE"
+else
+  echo ".env file already exists. Using existing values."
+  # Load existing values for summary
+  source "$ENV_FILE"
+fi
 
 # ----------------------------
-# Download compose file and rename
+# Compose file
 # ----------------------------
-curl -fsSL https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/compose.prod.yml -o compose.prod.yml
-mv -f compose.prod.yml docker-compose.yml
-echo "docker-compose.yml ready"
+if [ "$REINSTALL" = true ] || [ ! -f "$COMPOSE_FILE" ]; then
+  curl -fsSL https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main/compose.prod.yml -o compose.prod.yml
+  mv -f compose.prod.yml docker-compose.yml
+  echo "docker-compose.yml ready"
+else
+  echo "docker-compose.yml already exists, keeping current file."
+fi
 
 # ----------------------------
-# Optional firewall
+# Firewall (optional)
 # ----------------------------
 if command -v ufw >/dev/null; then
   echo "Configuring firewall..."
@@ -164,16 +182,20 @@ if command -v ufw >/dev/null; then
 fi
 
 # ----------------------------
-# Start Docker stack
+# Docker stack update/start
 # ----------------------------
-echo "Starting Docker stack..."
+echo "Pulling latest images..."
+docker compose pull
+
+echo "Starting/updating Docker stack..."
 docker compose up -d
 
 # ----------------------------
 # Systemd service
 # ----------------------------
 SERVICE_FILE="/etc/systemd/system/dnssecmanager.service"
-cat > "$SERVICE_FILE" <<EOF
+if [ ! -f "$SERVICE_FILE" ]; then
+  cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=DNSSEC-Manager Stack
 After=docker.service
@@ -188,10 +210,10 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
-
-systemctl daemon-reload
-systemctl enable dnssecmanager
-systemctl start dnssecmanager
+  systemctl daemon-reload
+  systemctl enable dnssecmanager
+  systemctl start dnssecmanager
+fi
 
 # ----------------------------
 # Healthchecks
@@ -216,3 +238,4 @@ echo "PowerDNS DB password: $PDNS_DB_PASSWORD"
 echo ""
 echo "✅ All information is stored in $ENV_FILE"
 echo "You can check running containers with: docker compose ps"
+echo "Run 'docker compose logs -f' to view logs"
