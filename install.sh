@@ -10,6 +10,18 @@ REPO_BASE="https://raw.githubusercontent.com/DNSSEC-Manager/DNSSEC-Manager/main"
 LOG_FILE="$INSTALL_DIR/install.log"
 exec > >(tee -i "$LOG_FILE") 2>&1
 
+# ----------------------------------------
+# Get external IP addresses of this server
+# ----------------------------------------
+
+# IPv4
+ipv4=$(ip -4 route get 1.1.1.1 \
+    | awk '{for (i=1; i<=NF; i++) if ($i == "src") print $(i+1)}')
+
+# IPv6
+ipv6=$(ip -6 route get 2606:4700:4700::1111 \
+    | awk '{for (i=1; i<=NF; i++) if ($i == "src") print $(i+1)}')
+
 echo "============================"
 echo " DNSSEC-Manager Installer"
 echo "============================"
@@ -282,6 +294,18 @@ echo ""
 echo "============================"
 echo " DNSSEC-Manager installation complete!"
 echo "============================"
+echo ""
+echo "Create the following DNS records:"
+echo "  $BACKEND_HOST A $ipv4"
+echo "  $TRAEFIK_HOST A $ipv4"
+echo "  $PDNS_HOST A $ipv4"
+echo "  $DOMAIN_NS1 A $ipv4"
+echo "  $DOMAIN_NS2 A $ipv4"
+echo "  $BACKEND_HOST AAAA $ipv6"
+echo "  $TRAEFIK_HOST AAAA $ipv6"
+echo "  $PDNS_HOST AAAA $ipv6"
+echo "  $DOMAIN_NS1 AAAA $ipv6"
+echo "  $DOMAIN_NS2 AAAA $ipv6"
 echo ""
 echo "DNSSSEC Manager URL: https://$BACKEND_HOST"
 echo "Default login:"
